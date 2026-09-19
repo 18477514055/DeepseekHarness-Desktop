@@ -99,6 +99,34 @@ jobs:
 
       # 自建内置服务器 -> 加载官方 UI -> 校验 __DSH_BOOT__ 注入
       # 退出码: 0 通过 / 1 校验失败 / 2 超时 / 9 单实例锁拒绝
+      #
+      # 注意 DSH_SMOKE_TIMEOUT_MS：CI 的 Windows runner 是无 GPU 的虚拟机，
+      # 冷启动官方服务器 + 加载前端可能远超默认的 60 秒（实测首次运行 72 秒
+      # 才退出，即稳定撞上 60 秒超时）。这里放宽到 150 秒 => 主进程内的
+      # 60 秒判定阈值被放宽，只能通过环境变量调整，不影响真机行为。
       - name: Smoke test (builtin server)
+        env:
+          DSH_SMOKE_TIMEOUT_MS: "150000"
         run: npm run smoke -- --port 0
         timeout-minutes: 8
+
+      # 冒烟失败时把结果与日志打出来 —— 否则只有一句"exit code 2"，
+      # 完全看不出是服务器没起来还是前端没注入 __DSH_BOOT__。
+      - name: Smoke diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          $ud = "$env:APPDATA\DeepSeek Harness"
+          Write-Host "=== userData: $ud ==="
+          if (Test-Path "$ud\smoke-result.json") {
+            Write-Host "--- smoke-result.json ---"
+            Get-Content "$ud\smoke-result.json" -Raw
+          } else { Write-Host "(没有 smoke-result.json)" }
+          if (Test-Path "$ud\server.log") {
+            Write-Host "--- server.log 尾部 60 行 ---"
+            Get-Content "$ud\server.log" -Tail 60
+          } else { Write-Host "(没有 server.log)" }
+          if (Test-Path "$ud\shell.log") {
+            Write-Host "--- shell.log 尾部 60 行 ---"
+            Get-Content "$ud\shell.log" -Tail 60
+          } else { Write-Host "(没有 shell.log)" }
