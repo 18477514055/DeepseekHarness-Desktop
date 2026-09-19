@@ -34,7 +34,7 @@
     "zip": "tar -a -c -f \"release/DeepSeek Harness-%npm_package_version%-win32-x64.zip\" -C release \"DeepSeek Harness-win32-x64\"",
     "verify": "node scripts/verify-package.js",
     "licenses": "node scripts/gen-third-party-licenses.js",
-    "licenses:check": "node scripts/gen-third-party-licenses.js --check",
+    "licenses:check": "node scripts/check-third-party-licenses.js",
     "dist": "npm run licenses && npm run package:app && npm run prune:release && electron-builder --win --prepackaged \"release/DeepSeek Harness-win32-x64\" && npm run zip && npm run verify"
   },
   "dependencies": {
