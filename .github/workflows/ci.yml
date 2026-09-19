@@ -6,8 +6,77 @@ on:
   pull_request:
 
 jobs:
+  # ── 快速闸门：不需要装依赖，几十秒出结果 ──────────────────────────
+  # 单独成一个 job，好处是合规检查不会被重量级的依赖安装/冒烟测试拖慢，
+  # 也不会因为安装失败而"连检查都没跑"（上游原 CI 就有这个问题）。
+  compliance:
+    name: 合规与静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Syntax check
+        run: |
+          for f in src/main.js src/preload.js src/status-page.js src/updater.js \
+                   scripts/gen-third-party-licenses.js; do
+            node --check "$f"
+          done
+
+      # 合规闸门：三层署名必须都在 LICENSE 里。
+      - name: LICENSE attribution intact
+        run: |
+          missing=""
+          for who in "DeepSeek" "chyra-moon" "18477514055"; do
+            grep -qF "$who" LICENSE || missing="$missing $who"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::LICENSE 缺少署名:$missing"
+            exit 1
+          fi
+          echo "LICENSE 三层署名齐全 ✓"
+
+      # 合规闸门：MIT 正文不得被改动。
+      - name: MIT body intact
+        run: |
+          grep -qF "Permission is hereby granted, free of charge" LICENSE
+          grep -qF "THE SOFTWARE IS PROVIDED \"AS IS\"" LICENSE
+          echo "MIT 正文完整 ✓"
+
+      # 合规闸门：合规文件必须存在且非空。
+      - name: Compliance files present
+        run: |
+          for f in LICENSE THIRD-PARTY-LICENSES.md README.md CONTRIBUTING.md SECURITY.md; do
+            if [ ! -s "$f" ]; then
+              echo "::error::缺少或为空: $f"
+              exit 1
+            fi
+          done
+          echo "合规文件齐全 ✓"
+
+      # 合规闸门：唯一 copyleft 组件必须在清单中被点名。
+      - name: Copyleft component documented
+        run: |
+          grep -qF "sharp-win32-x64" THIRD-PARTY-LICENSES.md
+          grep -qiF "LGPL" THIRD-PARTY-LICENSES.md
+          echo "LGPL 组件已记录 ✓"
+
+      # 合规闸门：不得把上游迭代备份或交接文档提交进来。
+      - name: No stray artifacts
+        run: |
+          stray=$(find . -type f -not -path './.git/*' -not -path './node_modules/*' \
+            \( -name '*.bak' -o -name '*.bak-*' -o -name '*.orig' -o -name '*.rej' \
+               -o -name '00-合规交接*' \) || true)
+          if [ -n "$stray" ]; then
+            echo "::error::发现不应提交的备份/交接文件:"
+            echo "$stray"
+            exit 1
+          fi
+          echo "无游离文件 ✓"
+
+  # ── 完整验证：装依赖 + 许可清单时效 + 内置服务器冒烟 ────────────────
   smoke:
-    name: 语法检查 + 内置服务器冒烟 (Windows)
+    name: 依赖 + 冒烟测试 (Windows)
+    needs: compliance
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -15,52 +84,18 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
+          # 注意：本项目仓库内没有提交 lock 文件（上游也没有），
+          # 所以这里不能开 cache: npm —— 那会让 setup-node 直接报错。
+          # 若将来提交了 package-lock.json，可以改成 cache: npm。
 
+      # 用 npm install 而非 npm ci：npm ci 强制要求 package-lock.json 存在。
       - name: Install dependencies
-        run: npm ci
-
-      - name: Syntax check
-        run: |
-          node --check src/main.js
-          node --check src/preload.js
-          node --check src/status-page.js
-          node --check src/updater.js
-          node --check scripts/gen-third-party-licenses.js
+        run: npm install --no-audit --no-fund
 
       # 合规闸门：第三方许可清单必须与 node_modules 实际内容一致。
-      # 过期的清单会让发布物不满足 MIT 的"保留版权与许可声明"义务。
+      # 这一步必须在安装之后 —— 它读的是真实的 node_modules。
       - name: License inventory is up to date
         run: npm run licenses:check
-
-      # 合规闸门：三层署名必须都在 LICENSE 里。
-      - name: LICENSE attribution intact
-        shell: pwsh
-        run: |
-          $lic = Get-Content LICENSE -Raw
-          $missing = @()
-          foreach ($who in @('DeepSeek', 'chyra-moon', '18477514055')) {
-            if ($lic -notmatch [regex]::Escape($who)) { $missing += $who }
-          }
-          if ($missing.Count -gt 0) {
-            Write-Error "LICENSE 缺少署名: $($missing -join ', ')"
-            exit 1
-          }
-          Write-Host "LICENSE 三层署名齐全 ✓"
-
-      # 合规闸门：不得把上游迭代备份或交接文档提交进来。
-      - name: No stray artifacts
-        shell: pwsh
-        run: |
-          $stray = Get-ChildItem -Recurse -File -Force |
-            Where-Object { $_.FullName -notmatch '\\node_modules\\' -and $_.FullName -notmatch '\\\.git\\' } |
-            Where-Object { $_.Name -match '\.bak|\.orig|\.rej' -or $_.Name -match '^00-合规交接' }
-          if ($stray) {
-            $stray | ForEach-Object { Write-Host "stray: $($_.FullName)" }
-            Write-Error "发现不应提交的备份/交接文件"
-            exit 1
-          }
-          Write-Host "无游离文件 ✓"
 
       # 自建内置服务器 -> 加载官方 UI -> 校验 __DSH_BOOT__ 注入
       # 退出码: 0 通过 / 1 校验失败 / 2 超时 / 9 单实例锁拒绝

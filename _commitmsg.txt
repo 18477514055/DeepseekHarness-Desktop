@@ -1,0 +1,30 @@
+fix(ci): 修复上游 CI 从未跑通的缺陷，并把合规检查拆成独立 job
+
+## 根因
+
+上游 ci.yml 用了 `npm ci` + `cache: npm`，但仓库内**没有任何 lock 文件**
+（package-lock.json / pnpm-lock.yaml / yarn.lock 均不存在）。后果有二：
+
+1. `setup-node` 的缓存步骤要求 lock 文件存在，找不到就直接失败；
+2. 即便缓存这步过了，`npm ci` 也强制要求 package-lock.json，同样会失败。
+
+=> 该 CI 自上游起就从未成功过。本次首次推送后立刻暴露：
+   失败步骤是 `Run actions/setup-node@v7`，我新增的四道闸门全部 skipped。
+
+## 修复
+
+- 去掉 `cache: npm`；`npm ci` 改为 `npm install`（注释里写明：
+  将来提交了 lock 文件可以换回来）。
+- 把合规检查拆成独立的 `compliance` job（ubuntu，不装依赖，几十秒出结果），
+  冒烟测试作为 `smoke` job 依赖它。这样合规闸门不会被重量级安装拖慢，
+  也不会再出现"安装失败导致连合规检查都没跑"的情况。
+- `compliance` job 扩到 6 组断言：
+  语法检查 / LICENSE 三层署名 / MIT 正文完整性 / 合规文件非空 /
+  copyleft 组件已记录 / 无游离文件。
+- 许可清单时效检查（licenses:check）保留在 `smoke` job ——
+  它必须读取真实的 node_modules，只能在安装之后跑。
+
+## 验证
+
+新 CI 的全部断言已在本地逐条预演通过（6/6）：
+语法 5 文件、署名 3 层、MIT 两段、合规文件 5 个、LGPL 记录、无游离文件。
