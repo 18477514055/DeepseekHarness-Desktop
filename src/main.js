@@ -689,15 +689,7 @@ function runSmoke() {
       finishSmoke(1, String(e));
     }
   });
-  // 超时上限:默认 60 秒(真机行为与上游一致,未改)。
-  // CI 的 Windows runner 是无 GPU 的虚拟机,冷启动官方服务器 + 加载前端可能
-  // 远超 60 秒,导致冒烟测试在 CI 上稳定误报 timeout。因此允许用
-  // DSH_SMOKE_TIMEOUT_MS 环境变量放宽 —— 只在 CI 里设置,不影响真机。
-  const smokeTimeoutMs = (() => {
-    const v = Number(process.env.DSH_SMOKE_TIMEOUT_MS);
-    return Number.isFinite(v) && v > 0 ? v : 60000;
-  })();
-  setTimeout(() => { console.log("[smoke] 超时"); finishSmoke(2, "timeout"); }, smokeTimeoutMs).unref();
+  setTimeout(() => { console.log("[smoke] 超时"); finishSmoke(2, "timeout"); }, 60000).unref();
 }
 
 /** 冒烟测试结束:结果写入 userData/smoke-result.json(不依赖 stdout 捕获,可被自动化读取),再退出。 */
